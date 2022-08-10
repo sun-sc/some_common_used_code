@@ -80,3 +80,103 @@ def change_medical_image(path,target_path):
     '''
     res,p = get_medical_image(path)
     save_medical_image(res,target_path,p)
+
+## 按顺序得到当前目录下，所有文件（包括文件夹）的名字
+def get_files_name(dire):
+    '''
+    按顺序得到当前目录下，所有文件（包括文件夹）的名字
+    :param dire: 文件夹目录
+    :return:files[list]，当前目录下所有的文件（包括文件夹）的名字，顺序排列
+    '''
+
+    assert os.path.exists(dire), "{} is not existed".format(dire)
+    assert os.path.isdir(dire), "{} is not a directory".format(dire)
+
+    files = os.listdir(dire)
+    files = natsort.natsorted(files)
+    return files
+## 得到一组dicom序列图像
+## 要同时复制上面的get_files_name函数
+import natsort
+from tempfile import TemporaryDirectory
+import shutil
+import numpy as np
+def get_dicom_image(dire):
+    '''
+    加载一组dicom序列图像
+    :param dire: dicom序列所在的文件夹路径，E.g. "E:/Work/Database/Teeth/origin/1/"
+    :return: (array,origin,spacing,direction)
+    array:  图像数组
+    origin: 三维图像坐标原点
+    spacing: 三维图像坐标间距
+    direction: 三维图像坐标方向
+    注意：实际取出的数组不一定与MITK或其他可视化工具中的方向一致！
+    可能会出现旋转\翻转等现象，这是由于dicom头文件中的origin,spacing,direction的信息导致的
+    在使用时建议先用matplotlib.pyplot工具查看一下切片的方式是否异常，判断是否需要一定的预处理
+    注意：实际DICOM第一张可能是定位图，同时取出会导致位置错乱
+    '''
+
+    assert os.path.exists(dire), "{} is not existed".format(dire)
+    assert os.path.isdir(dire), "{} is not a directory".format(dire)
+
+    ## 厚度不一样，则有一样定位图
+    thickness = dict()
+    files = get_files_name(dire)
+    for index in range(len(files)):
+        file = sitk.ReadImage(os.path.join(dire, files[index]))
+        sthick = file.GetMetaData('0018|0050')
+        if sthick in thickness:
+            thickness[sthick].append(files[index])
+        else:
+            thickness[sthick] = [files[index]]
+
+    thickness = sorted(thickness.items(), key=lambda x: len(x[1]), reverse=True)
+    files = thickness[0][1]
+
+    with TemporaryDirectory() as dirname:
+        for index in range(len(files)):
+            shutil.copyfile(src=os.path.join(dire, files[index]), dst=os.path.join(dirname, files[index]))
+
+        ## 重新加载图片
+        reader = sitk.ImageSeriesReader()
+        reader.MetaDataDictionaryArrayUpdateOn()  # 加载公开的元信息
+        reader.LoadPrivateTagsOn()  # 加载私有的元信息
+
+        series = reader.GetGDCMSeriesIDs(dirname)
+        filesn = reader.GetGDCMSeriesFileNames(dirname, series[0])
+
+        reader.SetFileNames(filesn)
+        dcmimg = reader.Execute()
+
+    array = sitk.GetArrayFromImage(dcmimg)
+    origin = dcmimg.GetOrigin()  # x, y, z
+    spacing = dcmimg.GetSpacing()  # x, y, z
+    direction = dcmimg.GetDirection()
+    image_type = dcmimg.GetPixelID()  ## 原图像每一个像素的类型
+    return array, origin, spacing, direction, image_type
+
+
+# 输入一个路径名，把一个文件夹下面nii.gz文件转换为npy文件
+def change_nifi2npy(dirname):
+    for filename in os.listdir(dirname):
+        c = filename.split('.',1)
+        if c[1] == 'nii.gz':
+            print(c[0] + '.npy')
+            res , p = get_medical_image(os.path.join(dirname , filename))
+            savename = os.path.join(dirname,c[0] + '.npy')
+            np.save(savename ,res)
+
+
+
+# niigz 转为 npy
+dirname = '/home/user/peizhun/rawdata/c2/labelsTr'
+i = 1
+for filename in os.listdir(dirname):
+    c = filename.split('.',1)
+    
+    if c[1] == 'nii.gz':
+        print(i , filename)
+        res , p = get_medical_image(os.path.join(dirname,filename))
+        filename = c[0] + '.npy'
+        np.save(os.path.join(dirname,filename) , res)
+        i = i + 1 
